@@ -67,7 +67,10 @@ fn delete_filter_entry<'a>(
                 .get_ava_as_iutf8(Attribute::Class)
                 .map(|classes| {
                     let classes = classes.sub(&MIGRATION_IGNORE_CLASSES);
-                    classes.is_subset(&MIGRATION_ENTRY_CLASSES)
+                    // The empty set is a subset of everything, so an entry whose classes are
+                    // entirely ignored would otherwise match here and be granted outright. Unlike
+                    // the create path there is no later check to catch that, so assert it here.
+                    !classes.is_empty() && classes.is_subset(&MIGRATION_ENTRY_CLASSES)
                 })
                 .unwrap_or(false);
 
