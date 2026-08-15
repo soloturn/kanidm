@@ -98,6 +98,45 @@ fn default_online_backup_enabled() -> bool {
     true
 }
 
+/// Per-source-address rate limiting of the unauthenticated authentication endpoints. The
+/// credential softlock throttles guessing against a known account; this bounds how fast a single
+/// source can probe the auth surface at all. Defaults are permissive - they target bulk automated
+/// probing, not interactive logins.
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub struct AuthRateLimit {
+    /// Enabled by default
+    #[serde(default = "default_auth_ratelimit_enabled")]
+    pub enabled: bool,
+    /// Requests a single source may burst before the sustained rate binds, defaults to 20
+    #[serde(default = "default_auth_ratelimit_burst")]
+    pub burst: u32,
+    /// Sustained requests per second per source once the burst is spent, defaults to 2
+    #[serde(default = "default_auth_ratelimit_per_second")]
+    pub per_second: f64,
+}
+
+impl Default for AuthRateLimit {
+    fn default() -> Self {
+        AuthRateLimit {
+            enabled: default_auth_ratelimit_enabled(),
+            burst: default_auth_ratelimit_burst(),
+            per_second: default_auth_ratelimit_per_second(),
+        }
+    }
+}
+
+fn default_auth_ratelimit_enabled() -> bool {
+    true
+}
+
+fn default_auth_ratelimit_burst() -> u32 {
+    20
+}
+
+fn default_auth_ratelimit_per_second() -> f64 {
+    2.0
+}
+
 fn default_online_backup_schedule() -> String {
     "@daily".to_string()
 }
@@ -421,6 +460,7 @@ pub struct ServerConfigV2 {
     role: Option<ServerRole>,
     log_level: Option<LogLevel>,
     online_backup: Option<OnlineBackup>,
+    auth_ratelimit: Option<AuthRateLimit>,
 
     http_client_address_info: Option<HttpAddressInfo>,
     ldap_client_address_info: Option<LdapAddressInfo>,
@@ -474,6 +514,7 @@ pub struct Configuration {
     pub tls_config: Option<TlsConfiguration>,
     pub integration_test_config: Option<Box<IntegrationTestConfig>>,
     pub online_backup: Option<OnlineBackup>,
+    pub auth_ratelimit: AuthRateLimit,
     pub domain: String,
     pub origin: Url,
     pub role: ServerRole,
@@ -509,6 +550,7 @@ impl Configuration {
             tls_chain: None,
             tls_client_ca: None,
             online_backup: None,
+            auth_ratelimit: None,
             domain: None,
             origin: None,
             log_level: None,
@@ -535,6 +577,13 @@ impl Configuration {
             tls_config: None,
             integration_test_config: None,
             online_backup: None,
+            // Integration tests all originate from loopback, so they would share a single budget
+            // and start failing on request count rather than behaviour. Tests that exercise the
+            // limiter set this explicitly.
+            auth_ratelimit: AuthRateLimit {
+                enabled: false,
+                ..AuthRateLimit::default()
+            },
             domain: "idm.example.com".to_string(),
             origin: Url::from_str("https://idm.example.com")
                 .expect("Failed to parse built-in string as URL"),
@@ -648,6 +697,7 @@ pub struct ConfigurationBuilder {
     tls_chain: Option<PathBuf>,
     tls_client_ca: Option<PathBuf>,
     online_backup: Option<OnlineBackup>,
+    auth_ratelimit: Option<AuthRateLimit>,
     domain: Option<String>,
     origin: Option<Url>,
     role: Option<ServerRole>,
@@ -972,6 +1022,10 @@ impl ConfigurationBuilder {
             self.online_backup = config.online_backup;
         }
 
+        if config.auth_ratelimit.is_some() {
+            self.auth_ratelimit = config.auth_ratelimit;
+        }
+
         if config.repl_config.is_some() {
             self.repl_config = config.repl_config;
         }
@@ -1008,6 +1062,7 @@ impl ConfigurationBuilder {
             tls_chain,
             tls_client_ca,
             mut online_backup,
+            auth_ratelimit,
             domain,
             origin,
             role,
@@ -1073,6 +1128,7 @@ impl ConfigurationBuilder {
             ldap_client_address_info,
             tls_config,
             online_backup,
+            auth_ratelimit: auth_ratelimit.unwrap_or_default(),
             domain,
             origin,
             role,

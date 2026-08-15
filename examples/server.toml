@@ -134,6 +134,22 @@ origin = "https://idm.example.com"
 # # AVOID IF POSSIBLE!!!
 # proxy-v1 = ["127.0.0.1", "127.0.0.0/8"]
 
+#   Rate limiting of the authentication endpoints, applied per source address. The credential
+#   softlock throttles guessing against a known account; this bounds how fast any single source
+#   can probe the authentication surface at all. Defaults are permissive and target bulk
+#   automated probing rather than interactive logins.
+#
+#   Note that if a reverse proxy sits in front of Kanidm, the source address is only meaningful
+#   when http_client_address_info is configured - otherwise every request appears to originate
+#   from the proxy and shares one budget.
+# [auth_ratelimit]
+#   Whether rate limiting is applied (default true)
+# enabled = true
+#   Requests a single source may burst before the sustained rate binds (default 20)
+# burst = 20
+#   Sustained requests per second per source once the burst is spent (default 2)
+# per_second = 2
+
 [online_backup]
 #   The path to the output folder for online backups
 path = "/var/lib/private/kanidm/backups/"

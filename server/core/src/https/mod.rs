@@ -1,5 +1,6 @@
 use self::extractors::ClientConnInfo;
 use self::javascript::*;
+use self::middleware::ratelimit::AuthRateLimiter;
 use crate::actors::{QueryServerReadV1, QueryServerWriteV1};
 use crate::config::{AddressSet, Configuration, ServerRole, TcpAddressInfo};
 use crate::tcp::process_client_addr;
@@ -79,6 +80,8 @@ pub struct ServerState {
     pub(crate) domain: String,
     // This is set to true by default, and is only false on integration tests.
     pub(crate) secure_cookies: bool,
+    /// Per-source-address limiter for the unauthenticated auth endpoints. `None` disables it.
+    pub(crate) auth_ratelimit: Option<Arc<AuthRateLimiter>>,
     /// So that we can work out which ID to use for spans
     pub(crate) logging_pipeline: LoggerType,
 }
@@ -293,6 +296,17 @@ pub async fn create_https_server(
         origin: config.origin,
         domain: config.domain.clone(),
         secure_cookies: config.integration_test_config.is_none(),
+        auth_ratelimit: config.auth_ratelimit.enabled.then(|| {
+            info!(
+                burst = config.auth_ratelimit.burst,
+                per_second = config.auth_ratelimit.per_second,
+                "Authentication endpoint rate limiting enabled"
+            );
+            Arc::new(AuthRateLimiter::new(
+                config.auth_ratelimit.burst,
+                config.auth_ratelimit.per_second,
+            ))
+        }),
         logging_pipeline,
     };
 

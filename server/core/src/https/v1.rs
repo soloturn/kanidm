@@ -8,7 +8,7 @@ use crate::https::apidocs::response_schema::{ApiResponseWithout200, DefaultApiRe
 use crate::https::extractors::{ClientConnInfo, VerifiedClientInformation};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue};
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
@@ -3434,12 +3434,25 @@ pub(crate) fn route_setup(state: ServerState) -> Router<ServerState> {
         //     "/v1/access_profile/{id}/_attr/{attr}",
         //     get(|| async { "TODO" }),
         // )
-        .route("/v1/auth", post(auth))
         .route(V1_AUTH_VALID, get(auth_valid))
         .route("/v1/logout", get(logout))
-        .route("/v1/reauth", post(reauth))
         .with_state(state.clone())
+        .merge(auth_routes(state.clone()))
         .layer(from_fn(dont_cache_me))
         .merge(cacheable_routes(state))
         .route("/v1/debug/ipinfo", get(debug_ipinfo))
+}
+
+/// The endpoints that begin an authentication, which are reachable unauthenticated by anyone who
+/// can open a socket. These carry a per-source-address rate limit that the rest of the API does
+/// not need - see [`crate::https::middleware::ratelimit`].
+fn auth_routes(state: ServerState) -> Router<ServerState> {
+    Router::new()
+        .route("/v1/auth", post(auth))
+        .route("/v1/reauth", post(reauth))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::https::middleware::ratelimit::auth_rate_limit_layer,
+        ))
+        .with_state(state)
 }
