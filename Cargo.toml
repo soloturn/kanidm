@@ -75,6 +75,11 @@ strip = "none"
 lto = "thin"
 opt-level = 3
 codegen-units = 1
+# Wrapping arithmetic in an IDM server is a correctness bug that fails silently - a length or
+# index computed by wraparound produces wrong authorisation decisions or unbounded loops rather
+# than stopping. Debug builds already check this (it is the cargo default), so this makes the
+# shipped binary behave like the configuration the test suite exercises.
+overflow-checks = true
 
 # Sets the settings for build scripts and proc-macros.
 [profile.release.build-override]
