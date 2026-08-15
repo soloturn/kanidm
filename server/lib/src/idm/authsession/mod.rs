@@ -48,6 +48,10 @@ const BAD_BACKUPCODE_MSG: &str = "invalid backup code";
 const BAD_AUTH_TYPE_MSG: &str = "invalid authentication method in this context";
 const BAD_CREDENTIALS: &str = "invalid credential message";
 const ACCOUNT_EXPIRED: &str = "account expired";
+/// Emitted both when an account exists but has no usable credential, and when no account
+/// matches the requested name at all. These MUST stay identical - see
+/// `IdmServerAuthTransaction::auth`.
+pub(crate) const INVALID_CRED_STATE: &str = "invalid credential state";
 const PW_BADLIST_MSG: &str = "password is in badlist";
 const BAD_OAUTH2_CSRF_STATE_MSG: &str = "invalid oauth2 csrf state";
 const BAD_OAUTH2_SUBJECT_MSG: &str = "invalid oauth2 token subject";
@@ -1233,7 +1237,7 @@ impl AuthSession {
                     AuthSessionState::Init(non_empty_handlers)
                 } else {
                     security_info!("account has no available credentials");
-                    AuthSessionState::Denied("invalid credential state")
+                    AuthSessionState::Denied(INVALID_CRED_STATE)
                 }
             }
         } else {

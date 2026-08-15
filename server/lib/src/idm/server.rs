@@ -6,7 +6,7 @@ use crate::idm::application::{
 };
 use crate::idm::audit::AuditEvent;
 use crate::idm::authentication::{AuthState, PreValidatedTokenStatus};
-use crate::idm::authsession::{AuthSession, AuthSessionData};
+use crate::idm::authsession::{AuthSession, AuthSessionData, INVALID_CRED_STATE};
 use crate::idm::credupdatesession::CredentialUpdateSessionMutex;
 use crate::idm::delayed::{
     AuthSessionRecord, BackupCodeRemoval, DelayedAction, PasswordUpgrade, UnixPasswordUpgrade,
@@ -1214,10 +1214,35 @@ impl IdmServerAuthTransaction<'_> {
                 //
                 // Check anything needed? Get the current auth-session-id from request
                 // because it associates to the nonce's etc which were all cached.
-                let euuid = self.qs_read.name_to_uuid(init.username.as_str())?;
+                // Resolve the name to an account. A name that matches nothing MUST NOT be
+                // distinguishable from an account that exists but can not begin an auth
+                // session, otherwise this endpoint is an unauthenticated username
+                // enumeration oracle. Both cases fall through to the same denial that
+                // AuthSession::new emits for "account has no available credentials".
+                let account_lookup =
+                    self.qs_read
+                        .name_to_uuid(init.username.as_str())
+                        .and_then(|euuid| {
+                            // Get the first / single entry we expect here ....
+                            self.qs_read
+                                .internal_search_uuid(euuid)
+                                .map(|entry| (euuid, entry))
+                        });
 
-                // Get the first / single entry we expect here ....
-                let entry = self.qs_read.internal_search_uuid(euuid)?;
+                let (euuid, entry) = match account_lookup {
+                    Ok(found) => found,
+                    Err(OperationError::NoMatchingEntries) => {
+                        security_info!(
+                            username = %init.username,
+                            "Authentication Session Unable to begin - no account matches this name",
+                        );
+                        return Ok(AuthResult {
+                            sessionid,
+                            state: AuthState::Denied(INVALID_CRED_STATE.to_string()),
+                        });
+                    }
+                    Err(err) => return Err(err),
+                };
 
                 info!(
                     username = %init.username,
