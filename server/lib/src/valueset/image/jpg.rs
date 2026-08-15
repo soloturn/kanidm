@@ -24,6 +24,19 @@ pub fn check_jpg_header(contents: &[u8]) -> Result<(), ImageValidationError> {
 /// Check to see if JPG is affected by acropalypse issues, returns `Ok(true)` if it is
 /// based on <https://github.com/lordofpipes/acropadetect/blob/main/src/detect.ts>
 pub fn has_trailer(contents: &Vec<u8>) -> Result<bool, ImageValidationError> {
+    // Guard the EOI scan below, which computes `buf.len() - EOI_MAGIC.len()`. Callers in
+    // ImageValue::validate reach this only after check_jpg_header and a full decode, but this is
+    // pub (see the benchmark note above) so it cannot rely on that: release builds have no
+    // overflow checks, so a short buffer would wrap the limit to usize::MAX and turn the scan
+    // into an effectively unbounded loop rather than a clean error. png_has_trailer guards
+    // itself the same way.
+    if contents.len() < JPEG_MAGIC.len() + EOI_MAGIC.len() {
+        return Err(ImageValidationError::InvalidImage(format!(
+            "JPEG file is too short to be valid, got {} bytes",
+            contents.len()
+        )));
+    }
+
     let buf = contents.as_slice();
 
     let mut pos = JPEG_MAGIC.len();
@@ -133,4 +146,21 @@ fn test_jpg_has_trailer() {
     // let test_bytes = vec![0xff, 0xd8, 0xff, 0xda, 0xff, 0xd9];
 
     assert!(has_trailer(&file_contents).expect("Failed to check for JPEG trailer"));
+}
+
+#[test]
+fn test_jpg_has_trailer_rejects_short_buffers() {
+    // Anything shorter than the magic plus an EOI marker cannot be a JPEG, and must error rather
+    // than underflow the EOI scan limit.
+    for len in 0..(JPEG_MAGIC.len() + EOI_MAGIC.len()) {
+        let contents = vec![0xff; len];
+        assert!(
+            has_trailer(&contents).is_err(),
+            "{len}-byte buffer should be rejected as too short"
+        );
+    }
+
+    // The shortest buffer the scan will accept: magic plus EOI, and no trailing bytes.
+    let contents = vec![0xff, 0xd8, 0xff, 0xd9];
+    assert!(!has_trailer(&contents).expect("magic + EOI should parse"));
 }
