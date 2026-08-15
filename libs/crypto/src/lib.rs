@@ -30,11 +30,24 @@ use std::fmt;
 use std::fmt::Display;
 use std::num::ParseIntError;
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 use tracing::{debug, error, warn};
 
 mod crypt_md5;
 
 pub use sha2;
+
+/// Compare two digests in constant time with respect to their contents.
+///
+/// The KDF outputs compared during password verification are not attacker-chosen, so a
+/// variable-time compare here is far weaker than a raw secret comparison would be - an
+/// attacker cannot cheaply search for an input yielding a chosen prefix. It is still a
+/// timing oracle on the stored digest, so prefer the constant-time path. Length is not
+/// secret (it is fixed per KDF), and `subtle` short-circuits on a length mismatch.
+#[inline]
+fn digest_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
+}
 
 // Per https://pages.nist.gov/800-63-4/sp800-63b.html max length should be 64. This is
 // measured in GRAPHEMES, not bytes.
@@ -985,7 +998,7 @@ impl Password {
                     })
                     .map(|hmac_key| {
                         // Actually compare the outputs.
-                        hmac_key.into_bytes().as_slice() == key
+                        digest_eq(hmac_key.into_bytes().as_slice(), key)
                     })
             }
             (Kdf::TPM_ARGON2ID { .. }, None) => {
@@ -1031,7 +1044,7 @@ impl Password {
                     })
                     .map(|()| {
                         // Actually compare the outputs.
-                        &check_key == key
+                        digest_eq(&check_key, key)
                     })
             }
             (Kdf::PBKDF2(cost, salt, key), _) => {
@@ -1049,7 +1062,7 @@ impl Password {
                 );
 
                 // Actually compare the outputs.
-                Ok(&chal_key == key)
+                Ok(digest_eq(&chal_key, key))
             }
             (Kdf::PBKDF2_SHA1(cost, salt, key), _) => {
                 let key_len = key.len();
@@ -1064,7 +1077,7 @@ impl Password {
                 );
 
                 // Actually compare the outputs.
-                Ok(&chal_key == key)
+                Ok(digest_eq(&chal_key, key))
             }
             (Kdf::PBKDF2_SHA512(cost, salt, key), _) => {
                 let key_len = key.len();
@@ -1079,46 +1092,46 @@ impl Password {
                 );
 
                 // Actually compare the outputs.
-                Ok(&chal_key == key)
+                Ok(digest_eq(&chal_key, key))
             }
             (Kdf::SHA1(key), _) => {
                 let mut hasher = Sha1::new();
                 hasher.update(cleartext.as_bytes());
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::SSHA1(salt, key), _) => {
                 let mut hasher = Sha1::new();
                 hasher.update(cleartext.as_bytes());
                 hasher.update(salt);
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::SHA256(key), _) => {
                 let mut hasher = Sha256::new();
                 hasher.update(cleartext.as_bytes());
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::SSHA256(salt, key), _) => {
                 let mut hasher = Sha256::new();
                 hasher.update(cleartext.as_bytes());
                 hasher.update(salt);
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::SHA512(key), _) => {
                 let mut hasher = Sha512::new();
                 hasher.update(cleartext.as_bytes());
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::SSHA512(salt, key), _) => {
                 let mut hasher = Sha512::new();
                 hasher.update(cleartext.as_bytes());
                 hasher.update(salt);
                 let r = hasher.finalize();
-                Ok(key == &(r.to_vec()))
+                Ok(digest_eq(key, r.as_slice()))
             }
             (Kdf::NT_MD4(key), _) => {
                 // We need to get the cleartext to utf16le for reasons.
@@ -1132,11 +1145,11 @@ impl Password {
                 hasher.update(&clear_utf16le);
                 let chal_key = hasher.finalize();
 
-                Ok(chal_key.as_slice() == key)
+                Ok(digest_eq(chal_key.as_slice(), key))
             }
             (Kdf::CRYPT_MD5 { s, h }, _) => {
                 let chal_key = crypt_md5::do_md5_crypt(cleartext.as_bytes(), s);
-                Ok(chal_key == *h)
+                Ok(digest_eq(&chal_key, h))
             }
             (Kdf::CRYPT_SHA256 { h }, _) => {
                 let is_valid = sha_crypt::sha256_check(cleartext, h.as_str()).is_ok();
